@@ -172,7 +172,7 @@ def run_ht(
         padding="max_length", max_length=prompt_len)
     gen_inputs.to(torch.cuda.current_device())
     prepare_output = llm_engine.prepare_inputs_and_config(self=model.module,
-        **gen_inputs, max_new_tokens=gen_len, do_sample=False, use_cache=False)
+        **gen_inputs, max_new_tokens=gen_len, do_sample=False)
 
     def prepare_alpaca(sample_raw):
         template = {
@@ -211,16 +211,17 @@ def run_ht(
     gen_trials = len(ht_workloads)
     cursor = 0
 
-    delay_bound = 60.0
+    deferral_bound = 60.0
 
     gen_outputs = []
+    gen_deferrals = []
     gen_timings = []
     peft_timings = []
     start = time.time()
     while time.time() - start < total_latency:
-        if cursor < gen_trials and (ht_workloads[cursor] + delay_bound <= time.time() - start or \
-            time.time() + delay_bound < total_latency):
+        if cursor < gen_trials and ht_workloads[cursor] <= time.time() - start:
             cursor += 1
+            gen_deferrals.append(0.0)
             input_ids = copy.deepcopy(prepare_output.input_ids)
             model_kwargs = copy.deepcopy(prepare_output.model_kwargs)
             batch_meta = llm_engine.BatchMeta(
@@ -233,35 +234,58 @@ def run_ht(
             )
             unfinished_sequences = torch.ones(input_ids.shape[0], dtype=torch.long, device=torch.cuda.current_device())
 
-            while True:
-                step, peft_inputs = next(dataloader_iter)
-                peft_inputs.to(torch.cuda.current_device())
-                f_input_ids = peft_inputs['input_ids']
-                f_attention_mask = peft_inputs['attention_mask']
-                f_position_ids = f_attention_mask.long().cumsum(-1) - 1
-                f_position_ids.masked_fill_(f_attention_mask == 0, 1)
-                f_labels = peft_inputs['labels']
+            while time.time() - start < total_latency:
+                flag = True
+                for i in range(len(gen_outputs), len(gen_deferrals)):
+                    if gen_deferrals[i] >= deferral_bound:
+                        flag = False
+                if flag:
+                    peft_forward_start_time = time.time()
+                    step, peft_inputs = next(dataloader_iter)
+                    peft_inputs.to(torch.cuda.current_device())
+                    f_input_ids = peft_inputs['input_ids']
+                    f_attention_mask = peft_inputs['attention_mask']
+                    f_position_ids = f_attention_mask.long().cumsum(-1) - 1
+                    f_position_ids.masked_fill_(f_attention_mask == 0, 1)
+                    f_labels = peft_inputs['labels']
 
-                unfinished_sequences, input_ids, model_kwargs = llm_heterogeneous_engine.generate_step(
-                    self=model.module,
-                    unfinished_sequences=unfinished_sequences,
-                    input_ids=input_ids,
-                    logits_processor=prepare_output.logits_processor,
-                    pad_token_id=prepare_output.pad_token_id,
-                    eos_token_id=prepare_output.eos_token_id,
-                    f_input_ids=f_input_ids,
-                    f_attention_mask=f_attention_mask,
-                    f_position_ids=f_position_ids,
-                    f_labels=f_labels,
-                    **model_kwargs,
-                )
+                    peft_loss, peft_logits, unfinished_sequences, input_ids, model_kwargs = llm_heterogeneous_engine.generate_step(
+                        self=model.module,
+                        unfinished_sequences=unfinished_sequences,
+                        input_ids=input_ids,
+                        logits_processor=prepare_output.logits_processor,
+                        pad_token_id=prepare_output.pad_token_id,
+                        eos_token_id=prepare_output.eos_token_id,
+                        f_input_ids=f_input_ids,
+                        f_attention_mask=f_attention_mask,
+                        f_position_ids=f_position_ids,
+                        f_labels=f_labels,
+                        **model_kwargs,
+                    )
+
+                    peft_backward_start_time = time.time()
+                    model.backward(peft_loss)
+                    if step % gradient_accumulation_steps == 0:
+                        model.step()
+
+                    peft_timings.append(time.time() - peft_forward_start_time)
+                    for i in range(len(gen_outputs), len(gen_deferrals)):
+                        gen_deferrals[i] += time.time() - peft_backward_start_time
+                else:
+                    unfinished_sequences, input_ids, model_kwargs = llm_engine.generate_step(
+                        self=model.module,
+                        unfinished_sequences=unfinished_sequences,
+                        input_ids=input_ids,
+                        logits_processor=prepare_output.logits_processor,
+                        pad_token_id=prepare_output.pad_token_id,
+                        eos_token_id=prepare_output.eos_token_id,
+                        **model_kwargs
+                    )
+
                 batch_meta.cur_lens += 1
 
-                if step % gradient_accumulation_steps == 0:
-                    model.step()
-
                 if prepare_output.stopping_criteria(input_ids, None):
-                    gen_timings.append(time.time() - start - ht_workloads[len(gen_outputs)])
+                    gen_timings.append(time.time() - start - ht_workloads[int(len(gen_outputs) / batch_size)])
                     unfinished_sequences, input_ids, model_kwargs, batch_meta, output_ids = llm_engine.remove_old_request(
                         unfinished_sequences=unfinished_sequences,
                         input_ids=input_ids,
@@ -275,10 +299,21 @@ def run_ht(
 
                 if cursor < gen_trials and ht_workloads[cursor] <= time.time() - start:
                     cursor += 1
+                    gen_deferrals.append(0.0)
                     new_unfinished_sequences = torch.ones(prepare_output.input_ids.shape[0],
                     dtype=torch.long, device=input_ids.device)
                     new_input_ids = copy.deepcopy(prepare_output.input_ids)
                     new_model_kwargs = copy.deepcopy(prepare_output.model_kwargs)
+
+                    new_unfinished_sequences, new_input_ids, new_model_kwargs = llm_engine.generate_step(
+                        self=model.module,
+                        unfinished_sequences=new_unfinished_sequences,
+                        input_ids=new_input_ids,
+                        logits_processor=prepare_output.logits_processor,
+                        pad_token_id=prepare_output.pad_token_id,
+                        eos_token_id=prepare_output.eos_token_id,
+                        **new_model_kwargs
+                    )
 
                     unfinished_sequences, input_ids, model_kwargs = llm_engine.add_new_request(
                         unfinished_sequences = unfinished_sequences,
@@ -300,9 +335,6 @@ def run_ht(
                         device=torch.cuda.current_device(), dtype=torch.long)), dim=0)
 
     total_latency = time.time() - start
-    print(gen_timings)
-    exit()
-
 
     if local_rank != 0:
         return
@@ -313,7 +345,7 @@ def run_ht(
     assert all(x == prompt_len for x in gen_input_lens)
     assert all(x == prompt_len + gen_len for x in gen_output_lens)
     peft_input_lens = [len(x) for x in peft_inputs.input_ids]
-    peft_output_lens = [len(x) for x in peft_outputs.logits]
+    peft_output_lens = [len(x) for x in peft_logits]
     assert all(x == seq_len for x in peft_input_lens)
     assert all(x == seq_len for x in peft_output_lens)
 
@@ -322,7 +354,7 @@ def run_ht(
     print(f"gen_timings = {gen_timings[-3:]}")
     print(f"peft_timings = {peft_timings[-3:]}")
 
-    gen_total_latency = total_latency - sum(peft_timings)
+    gen_total_latency = total_latency
     gen_exec_throughput = gen_trials * batch_size * gen_len / gen_total_latency
 
     peft_trials = len(peft_timings)

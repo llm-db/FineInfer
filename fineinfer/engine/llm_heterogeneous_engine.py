@@ -1,8 +1,7 @@
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-import torch
-
 from transformers import PreTrainedModel
+import torch
 from transformers.generation.logits_process import (
     LogitsProcessorList
 )
@@ -31,7 +30,7 @@ def generate_step(
     f_position_ids: Optional[torch.LongTensor] = None,
     f_labels: Optional[torch.LongTensor] = None,
     **model_kwargs,
-) -> Tuple[torch.LongTensor, torch.LongTensor, Dict[str, Any]]:
+) -> Tuple[torch.FloatTensor, torch.LongTensor, torch.LongTensor, Dict[str, Any]]:
     #init values
     if isinstance(eos_token_id, int):
         eos_token_id = [eos_token_id]
@@ -41,7 +40,7 @@ def generate_step(
     model_inputs = self.prepare_inputs_for_generation(input_ids, **model_kwargs)
 
     # forward pass to get next token
-    outputs = self.forward_heterogeneous(
+    f_loss, f_logits, outputs = self.forward_heterogeneous(
         **model_inputs,
         return_dict=True,
         output_attentions=False,
@@ -78,5 +77,4 @@ def generate_step(
             next_tokens.tile(eos_token_id_tensor.shape[0], 1).ne(eos_token_id_tensor.unsqueeze(1)).prod(dim=0)
         )
 
-    model.backward(outputs.loss)
-    return unfinished_sequences, input_ids, model_kwargs
+    return f_loss, f_logits, unfinished_sequences, input_ids, model_kwargs

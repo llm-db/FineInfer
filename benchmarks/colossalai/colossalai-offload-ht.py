@@ -119,7 +119,7 @@ def run_ht(
         padding="max_length", max_length=prompt_len)
     gen_inputs.to(torch.cuda.current_device())
     prepare_output = llm_engine.prepare_inputs_and_config(self=model.module,
-        **gen_inputs, max_new_tokens=gen_len, do_sample=False, use_cache=False)
+        **gen_inputs, max_new_tokens=gen_len, do_sample=False)
 
     def prepare_alpaca(sample_raw):
         template = {
@@ -193,7 +193,7 @@ def run_ht(
                     batch_meta.cur_lens += 1
 
                     if prepare_output.stopping_criteria(input_ids, None):
-                        gen_timings.append(time.time() - start - ht_workloads[len(gen_outputs)])
+                        gen_timings.append(time.time() - start - ht_workloads[int(len(gen_outputs) / batch_size)])
                         unfinished_sequences, input_ids, model_kwargs, batch_meta, output_ids = llm_engine.remove_old_request(
                             unfinished_sequences=unfinished_sequences,
                             input_ids=input_ids,
