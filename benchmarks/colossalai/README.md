@@ -23,7 +23,7 @@ CUDA_VISIBLE_DEVICES=0 python colossalai-offload-peft-gen.py -m meta-llama/Llama
 CUDA_VISIBLE_DEVICES=0 python colossalai-offload-peft.py -m meta-llama/Llama-2-7b-hf --batch_size 1 --cpu_offload
 ```
 
-ColossalAI-Heterogeneous
+ColossalAI-heterogeneous
 ```
 CUDA_VISIBLE_DEVICES=0 python colossalai-ht.py -m meta-llama/Llama-2-7b-hf --batch_size 1
 CUDA_VISIBLE_DEVICES=0 python colossalai-offload-ht.py -m meta-llama/Llama-2-13b-hf --batch_size 1 --cpu_offload

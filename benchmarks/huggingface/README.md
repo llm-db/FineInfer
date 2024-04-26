@@ -16,7 +16,7 @@ CUDA_VISIBLE_DEVICES=0 python hf-peft-gen.py -m meta-llama/Llama-2-7b-hf --batch
 CUDA_VISIBLE_DEVICES=0 python hf-peft.py -m meta-llama/Llama-2-7b-hf --batch_size 1
 ```
 
-HuggingFace-Offload
+HuggingFace-offload
 ```
 CUDA_VISIBLE_DEVICES=0 python hf-offload-gen.py -m meta-llama/Llama-2-7b-hf --batch_size 1 --cpu_offload
 CUDA_VISIBLE_DEVICES=0 python hf-offload-gen.py -m meta-llama/Llama-2-7b-hf --batch_size 1 --disk_offload

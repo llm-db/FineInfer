@@ -9,16 +9,12 @@ pip install bitsandbytes peft
 conda deactivate
 ```
 
-FineInfer
+FineInfer-inference
 ```
 CUDA_VISIBLE_DEVICES=0 python fi-gen.py -m meta-llama/Llama-2-7b-hf --batch_size 1
 ```
 
-FineInfer-Offload
-```
-```
-
-FineInfer-Heterogeneous
+FineInfer-heterogeneous
 ```
 CUDA_VISIBLE_DEVICES=0 python baseline-ht.py -m meta-llama/Llama-2-7b-hf --batch_size 1
 CUDA_VISIBLE_DEVICES=0 python fi-ht.py -m meta-llama/Llama-2-7b-hf --batch_size 1
