@@ -79,7 +79,7 @@ def run_ht(
     # Load tokenizer
     config = AutoConfig.from_pretrained(model_name, cache_dir=cache_dir)
     tokenizer = AutoTokenizer.from_pretrained(model_name, padding_side='left', cache_dir=cache_dir)
-    tokenizer.pad_token = '[PAD]'
+    tokenizer.pad_token = tokenizer.pad_token or tokenizer.eos_token
 
     print("load model")
     adapter_names = ["adapter_" + str(i) for i in range(adapter_size)]
@@ -150,6 +150,7 @@ def run_ht(
             with torch.no_grad():
                 input_ids = copy.deepcopy(prepare_output.input_ids)
                 model_kwargs = copy.deepcopy(prepare_output.model_kwargs)
+                model_kwargs = model._get_initial_cache_position(input_ids, model_kwargs)
                 batch_meta = llm_engine.BatchMeta(
                     prompt_lens = torch.full(size=(batch_size,), fill_value=prompt_len,
                         dtype=torch.long, device=torch.cuda.current_device()),
@@ -166,13 +167,15 @@ def run_ht(
                         unfinished_sequences=unfinished_sequences,
                         input_ids=input_ids,
                         logits_processor=prepare_output.logits_processor,
-                        pad_token_id=prepare_output.pad_token_id,
-                        eos_token_id=prepare_output.eos_token_id,
+                        stopping_criteria=prepare_output.stopping_criteria,
+                        generation_config=prepare_output.generation_config,
                         **model_kwargs
                     )
                     batch_meta.cur_lens += 1
 
-                    if prepare_output.stopping_criteria(input_ids, None):
+                    this_peer_finished = unfinished_sequences.max() == 0
+
+                    if not model._has_unfinished_sequences(this_peer_finished, prepare_output.synced_gpus, input_ids.device):
                         gen_timings.append(time.time() - start - ht_workloads[int(len(gen_outputs) / batch_size)])
                         unfinished_sequences, input_ids, model_kwargs, batch_meta, output_ids = llm_engine.remove_old_request(
                             unfinished_sequences=unfinished_sequences,
@@ -191,14 +194,15 @@ def run_ht(
                             dtype=torch.long, device=input_ids.device)
                         new_input_ids = copy.deepcopy(prepare_output.input_ids)
                         new_model_kwargs = copy.deepcopy(prepare_output.model_kwargs)
+                        new_model_kwargs = model._get_initial_cache_position(new_input_ids, new_model_kwargs)
 
                         new_unfinished_sequences, new_input_ids, new_model_kwargs = llm_engine.generate_step(
                             self=model,
                             unfinished_sequences=new_unfinished_sequences,
                             input_ids=new_input_ids,
                             logits_processor=prepare_output.logits_processor,
-                            pad_token_id=prepare_output.pad_token_id,
-                            eos_token_id=prepare_output.eos_token_id,
+                            stopping_criteria=prepare_output.stopping_criteria,
+                            generation_config=prepare_output.generation_config,
                             **new_model_kwargs
                         )
 
@@ -281,7 +285,7 @@ def run_ht(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model_name", "-m", type=str, default="meta-llama/Llama-2-7b-hf", help="model name or path")
+    parser.add_argument("--model_name", "-m", type=str, default="meta-llama/Meta-Llama-3-8B", help="model name or path")
     parser.add_argument("--adapter_size", type=int, default=2, help="lora adapters swapping")
     parser.add_argument("--dataset_name", type=str, default="yahma/alpaca-cleaned", help="dataset name or path")
     parser.add_argument("--batch_size", type=int, default=1)

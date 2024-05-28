@@ -13,8 +13,10 @@ FineInfer supports concurrent parameter-efficient fine-tuning and inference thro
 * Hybrid system architecture
 * Heterogeneous batching
 
-## Installation and examples
-[See here](https://github.com/llm-db/FineInfer/blob/main/benchmarks/fineinfer/README.md)
+## Get Started
+[Installation and examples](https://github.com/llm-db/FineInfer/tree/main/benchmarks/fineinfer)
+
+The current version removes some previous features and functionalities. If you need them, please download [previous versions](https://github.com/llm-db/FineInfer/releases).
 
 ## Citation
 ```

@@ -1,4 +1,8 @@
-# Python dependencies required for development
-peft==0.7.1
-transformers==4.36.2
-
+--extra-index-url https://download.pytorch.org/whl/cu121
+torch == 2.3.0
+torchaudio == 2.3.0
+torchvision == 0.18.0
+transformers == 4.41.0
+peft == 0.11.0
+datasets == 2.19.0
+fastapi == 0.111.0

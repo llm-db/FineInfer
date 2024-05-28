@@ -1,5 +1,5 @@
 """
-Run Llama2 with huggingface
+Run Llama3 with huggingface
 
 Reference:
 https://github.com/microsoft/DeepSpeedExamples/blob/master/inference/huggingface/zero_inference/run_model.py
@@ -71,7 +71,7 @@ def run_peft(
     # Load tokenizer
     config = AutoConfig.from_pretrained(model_name, cache_dir=cache_dir)
     tokenizer = AutoTokenizer.from_pretrained(model_name, padding_side='left', cache_dir=cache_dir)
-    tokenizer.pad_token = '[PAD]'
+    tokenizer.pad_token = tokenizer.pad_token or tokenizer.eos_token
 
     print("load model")
     model = get_hf_model(
@@ -173,7 +173,7 @@ def run_peft(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model_name", "-m", type=str, default="meta-llama/Llama-2-7b-hf", help="model name or path")
+    parser.add_argument("--model_name", "-m", type=str, default="meta-llama/Meta-Llama-3-8B", help="model name or path")
     parser.add_argument("--dataset_name", type=str, default="yahma/alpaca-cleaned", help="dataset name or path")
     parser.add_argument("--trials", type=int, default=5,  help="Number of peft iterations")
     parser.add_argument("--batch_size", type=int, default=1)

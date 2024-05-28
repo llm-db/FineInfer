@@ -16,13 +16,13 @@ import torch
 import transformers
 from transformers import (
     AutoConfig,
+    AutoModelForCausalLM,
     AutoTokenizer,
 )
 
 import sys
 sys.path.append("../..")
 from benchmarks import utils
-from fineinfer.transformers.models.llama.modeling_llama import LlamaForCausalLM
 from fineinfer.engine import llm_engine
 
 
@@ -40,7 +40,7 @@ def get_hf_model(
     if quant_bits == 4:
         raise NotImplementedError()
 
-    model = LlamaForCausalLM.from_pretrained(model_name, cache_dir=cache_dir, torch_dtype=dtype)
+    model = AutoModelForCausalLM.from_pretrained(model_name, cache_dir=cache_dir, torch_dtype=dtype)
     model.to(torch.cuda.current_device())
     model = model.eval()
 
@@ -62,7 +62,7 @@ def run_generation(
     # Load tokenizer
     config = AutoConfig.from_pretrained(model_name, cache_dir=cache_dir)
     tokenizer = AutoTokenizer.from_pretrained(model_name, padding_side='left', cache_dir=cache_dir)
-    tokenizer.pad_token = '[PAD]'
+    tokenizer.pad_token = tokenizer.pad_token or tokenizer.eos_token
 
     print("load model")
     with torch.no_grad():
@@ -108,6 +108,8 @@ def run_generation(
     start = time.time()
     with torch.no_grad():
         model.stage = "prefill"
+        model_kwargs = model._get_initial_cache_position(input_ids, model_kwargs)
+
         while True:
             if input_ids.shape[0] + len(output_ids) < trials * batch_size \
                 and torch.min(batch_meta.cur_lens) == prompt_len + 5:
@@ -118,13 +120,15 @@ def run_generation(
 
                 prefill_timings.append(model.__duration__)
                 model.stage = "prefill"
+                new_model_kwargs = model._get_initial_cache_position(new_input_ids, new_model_kwargs)
+
                 new_unfinished_sequences, new_input_ids, new_model_kwargs = llm_engine.generate_step(
                     self=model,
                     unfinished_sequences=new_unfinished_sequences,
                     input_ids=new_input_ids,
                     logits_processor=prepare_output.logits_processor,
-                    pad_token_id=prepare_output.pad_token_id,
-                    eos_token_id=prepare_output.eos_token_id,
+                    stopping_criteria=prepare_output.stopping_criteria,
+                    generation_config=prepare_output.generation_config,
                     **new_model_kwargs
                 )
 
@@ -152,18 +156,16 @@ def run_generation(
                 unfinished_sequences=unfinished_sequences,
                 input_ids=input_ids,
                 logits_processor=prepare_output.logits_processor,
-                pad_token_id=prepare_output.pad_token_id,
-                eos_token_id=prepare_output.eos_token_id,
+                stopping_criteria=prepare_output.stopping_criteria,
+                generation_config=prepare_output.generation_config,
                 **model_kwargs
             )
 
             batch_meta.cur_lens += 1
 
-            if unfinished_sequences.max() == 0:
-                this_peer_finished = True
+            this_peer_finished = unfinished_sequences.max() == 0
 
-            # stop if we exceed the maximum length
-            if prepare_output.stopping_criteria(input_ids, None):
+            if not model._has_unfinished_sequences(this_peer_finished, prepare_output.synced_gpus, input_ids.device):
                 unfinished_sequences, input_ids, model_kwargs, batch_meta, output_ids = llm_engine.remove_old_request(
                     unfinished_sequences=unfinished_sequences,
                     input_ids=input_ids,
@@ -173,10 +175,7 @@ def run_generation(
                 )
 
                 if len(output_ids) >= trials * batch_size:
-                    this_peer_finished = True
-
-            if this_peer_finished and not prepare_output.synced_gpus:
-                break
+                    break
 
     end = time.time()
     total_timings.append(end - start)
@@ -231,7 +230,7 @@ def run_generation(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model_name", "-m", type=str, default="meta-llama/Llama-2-7b-hf", help="model name or path")
+    parser.add_argument("--model_name", "-m", type=str, default="meta-llama/Meta-Llama-3-8B", help="model name or path")
     parser.add_argument("--trials", type=int, default=3,  help="Number of token generation iterations")
     parser.add_argument("--batch_size", type=int, default=1)
     parser.add_argument("--prompt_len", type=int, default=512,  help="prompt length")
